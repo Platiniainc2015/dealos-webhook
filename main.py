@@ -151,7 +151,7 @@ def extract_email_from_text(text: str) -> str:
     if "@" in cleaned_input and " " not in cleaned_input:
         match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', cleaned_input)
         if match:
-            return match.group(0)
+            return match.group(0).lower()
 
     # Convert common spoken/written separators to standard email chars
     temp = re.sub(r'\s*[\(\[]?\s*at\s*[\)\]]?\s*', ' @ ', text, flags=re.IGNORECASE)
@@ -217,7 +217,7 @@ def extract_email_from_text(text: str) -> str:
     # Validate final format
     final_match = re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email_clean)
     if final_match:
-        return email_clean
+        return email_clean.lower()
         
     return ""
 
