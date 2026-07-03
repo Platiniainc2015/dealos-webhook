@@ -140,16 +140,59 @@ def determine_stage(call_data: dict) -> str:
     # Default: bot called
     return "bot_called"
 
+def extract_email_from_text(text: str) -> str:
+    """Extract and clean email address from raw text/transcripts."""
+    if not text:
+        return ""
+    
+    # 1. Search for standard email pattern
+    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
+    if match:
+        return match.group(0)
+    
+    # 2. Try handling common verbal/spoken patterns like "john at gmail dot com"
+    cleaned = re.sub(r'\s+at\s+', '@', text, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s+@\s+', '@', cleaned)
+    cleaned = re.sub(r'\s+dot\s+', '.', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s+\.\s+', '.', cleaned)
+    
+    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', cleaned)
+    if match:
+        return match.group(0)
+        
+    return ""
+
 def extract_contact_info(call_data: dict) -> dict:
     """Extract contact information from Vapi call data."""
     # Get the customer phone from the call
     customer = call_data.get("customer") or {}
     phone = customer.get("number") or ""
-    email = customer.get("email") or ""
     
     # Get structured data from analysis
     analysis = call_data.get("analysis") or {}
     structured_data = analysis.get("structuredData") or {}
+    
+    # 1. Try customer object
+    email = customer.get("email") or ""
+    
+    # 2. Try structured data fields
+    if not email:
+        email = (
+            structured_data.get("seller_email") or
+            structured_data.get("email") or
+            structured_data.get("email_address") or
+            structured_data.get("customer_email") or
+            ""
+        )
+    
+    # 3. Search raw transcript and summary
+    if not email:
+        transcript = call_data.get("transcript") or ""
+        email = extract_email_from_text(transcript)
+        
+    if not email:
+        summary = analysis.get("summary") or ""
+        email = extract_email_from_text(summary)
     
     # Try to extract name from structured data or transcript
     first_name = structured_data.get("seller_first_name", "")
@@ -199,11 +242,17 @@ def create_or_update_contact(contact_info: dict, custom_fields: list) -> str:
             if contact:
                 # Update existing contact
                 contact_id = contact["id"]
+                existing_email = contact.get("email")
+                new_email = contact_info.get("email")
+                
+                # Preserve existing email if new email is empty/missing
+                email_to_update = new_email if new_email else existing_email
+                
                 update_url = f"{GHL_BASE_URL}/contacts/{contact_id}"
                 update_data = {
                     "firstName": contact_info.get("firstName"),
                     "lastName": contact_info.get("lastName"),
-                    "email": contact_info.get("email"),
+                    "email": email_to_update or None,
                     "customFields": custom_fields,
                 }
                 update_resp = requests.put(update_url, headers=GHL_HEADERS, json=update_data)
@@ -426,6 +475,100 @@ async def vapi_webhook(request: Request):
             status_code=500
         )
 
+def handle_send_contract_tool(arguments: dict, call_data: dict) -> str:
+    """
+    Handle the send_contract tool call from Vapi during the call.
+    Creates/updates the contact with the provided email, and triggers the GHL contract workflow.
+    """
+    email = arguments.get("email") or arguments.get("seller_email") or ""
+    deal_type = arguments.get("deal_type") or arguments.get("dealType") or "Cash"
+    first_name = arguments.get("first_name") or arguments.get("firstName") or ""
+    last_name = arguments.get("last_name") or arguments.get("lastName") or ""
+    property_address = arguments.get("property_address") or arguments.get("propertyAddress") or ""
+    
+    # Get phone from call data
+    customer = call_data.get("customer") or {}
+    phone = customer.get("number") or ""
+    
+    # If email wasn't provided or was malformed, search transcript
+    if not email or "@" not in email:
+        transcript = call_data.get("transcript") or ""
+        email = extract_email_from_text(email or transcript)
+        
+    if not email:
+        # Check summary/analysis if available
+        analysis = call_data.get("analysis") or {}
+        summary = analysis.get("summary") or ""
+        email = extract_email_from_text(summary)
+        
+    if not email:
+        return "Error: Could not extract a valid email address. Please ask the seller for their email address."
+        
+    # Get structured data from call if available
+    analysis = call_data.get("analysis") or {}
+    structured_data = analysis.get("structuredData") or {}
+    
+    # Merge/override arguments into structured data
+    if property_address:
+        structured_data["property_address"] = property_address
+    if deal_type:
+        structured_data["deal_type"] = deal_type
+        
+    # Build contact info
+    if not first_name:
+        first_name = structured_data.get("seller_first_name") or structured_data.get("first_name") or "Unknown"
+    if not last_name:
+        last_name = structured_data.get("seller_last_name") or structured_data.get("last_name") or "Seller"
+        
+    contact_info = {
+        "phone": phone,
+        "firstName": first_name,
+        "lastName": last_name,
+        "email": email,
+    }
+    
+    # Build custom fields
+    custom_fields = build_custom_fields(structured_data)
+    
+    # Add summary if available
+    summary = analysis.get("summary") or ""
+    if summary:
+        custom_fields.append({
+            "id": CUSTOM_FIELD_MAP["internal_notes"],
+            "field_value": summary
+        })
+        
+    # Create or update contact in GHL
+    contact_id = create_or_update_contact(contact_info, custom_fields)
+    if not contact_id:
+        return "Error: Failed to create or update contact in GoHighLevel."
+        
+    # Create opportunity in 'under_contract' stage since we are sending contract
+    stage_id = STAGES.get("under_contract", STAGES["bot_called"])
+    create_opportunity(contact_id, stage_id, structured_data)
+    
+    # Trigger contract send via GHL tag
+    send_contract(contact_id, deal_type, contact_info)
+    
+    # Trigger buyer blast
+    deal_info = {
+        "seller_name": f"{first_name} {last_name}".strip() or "Unknown Seller",
+        "property_address": structured_data.get("property_address", "Unknown Address"),
+        "property_city": structured_data.get("property_city", ""),
+        "property_state": structured_data.get("property_state", ""),
+        "offer_amount": structured_data.get("offer_amount", "N/A"),
+        "arv": structured_data.get("arv", "N/A"),
+        "deal_type": deal_type,
+        "bedrooms": structured_data.get("bedrooms", "N/A"),
+        "bathrooms": structured_data.get("bathrooms", "N/A"),
+    }
+    process_under_contract_deal(deal_info)
+    
+    # Cancel follow-ups
+    cancel_follow_ups(contact_id)
+    
+    return f"Success: Contact updated/created with email {email}. Contract '{deal_type}' has been sent to the seller via text and email."
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "DealOS Webhook"}
@@ -449,12 +592,36 @@ async def vapi_server_url(request: Request):
             tool_calls = message.get("toolCalls", [])
             results = []
             for tool_call in tool_calls:
-                tool_name = tool_call.get("function", {}).get("name")
-                # Handle specific tool logic here if needed
-                results.append({
-                    "toolCallId": tool_call.get("id"),
-                    "result": "success"
-                })
+                function_info = tool_call.get("function", {})
+                tool_name = function_info.get("name")
+                arguments = function_info.get("arguments", {})
+                
+                # Arguments might be passed as a JSON string
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except Exception:
+                        arguments = {}
+                
+                if tool_name in ["send_contract", "sendContract", "send_contract_to_seller", "sendContractToSeller"]:
+                    # Get call context from payload
+                    call_data = payload.get("message", {}).get("call") or payload.get("call") or {}
+                    # We might have analysis/transcript in the message
+                    if "transcript" not in call_data and "transcript" in payload.get("message", {}):
+                        call_data["transcript"] = payload["message"]["transcript"]
+                    if "analysis" not in call_data and "analysis" in payload.get("message", {}):
+                        call_data["analysis"] = payload["message"]["analysis"]
+                        
+                    res_msg = handle_send_contract_tool(arguments, call_data)
+                    results.append({
+                        "toolCallId": tool_call.get("id"),
+                        "result": res_msg
+                    })
+                else:
+                    results.append({
+                        "toolCallId": tool_call.get("id"),
+                        "result": "success"
+                    })
             return JSONResponse(content={"results": results})
         
         return JSONResponse(content={})
