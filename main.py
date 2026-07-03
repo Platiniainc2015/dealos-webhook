@@ -145,20 +145,79 @@ def extract_email_from_text(text: str) -> str:
     if not text:
         return ""
     
-    # 1. Search for standard email pattern
-    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', text)
-    if match:
-        return match.group(0)
+    # If the text is already just a clean email (with no spaces/extra words)
+    # but maybe has some surrounding spaces, clean and return it.
+    cleaned_input = text.strip()
+    if "@" in cleaned_input and " " not in cleaned_input:
+        match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', cleaned_input)
+        if match:
+            return match.group(0)
+
+    # Convert common spoken/written separators to standard email chars
+    temp = re.sub(r'\s*[\(\[]?\s*at\s*[\)\]]?\s*', ' @ ', text, flags=re.IGNORECASE)
+    temp = re.sub(r'\s*@\s*', ' @ ', temp)
+    temp = re.sub(r'\s*[\(\[]?\s*dot\s*[\)\]]?\s*', '.', temp, flags=re.IGNORECASE)
+    temp = re.sub(r'\s*\.\s*', '.', temp)
     
-    # 2. Try handling common verbal/spoken patterns like "john at gmail dot com"
-    cleaned = re.sub(r'\s+at\s+', '@', text, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\s+@\s+', '@', cleaned)
-    cleaned = re.sub(r'\s+dot\s+', '.', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\s+\.\s+', '.', cleaned)
+    # Split text into words
+    words = temp.split()
     
-    match = re.search(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', cleaned)
-    if match:
-        return match.group(0)
+    # Find the index of the word containing "@"
+    at_index = -1
+    for i, w in enumerate(words):
+        if "@" in w:
+            at_index = i
+            break
+            
+    if at_index == -1:
+        return ""
+        
+    # Split the word containing "@" into local part and domain part
+    at_word = words[at_index]
+    local_part_start, domain_part_start = at_word.split("@", 1)
+    
+    # We will build the local part (left of @)
+    local_words = []
+    if local_part_start:
+        local_words.append(local_part_start)
+        
+    # Stop-words that indicate the email address has ended/not started yet
+    stop_words = {
+        "is", "email", "my", "to", "sent", "the", "at", "address", "a", "for", 
+        "this", "it", "your", "me", "phone", "number", "and", "please", "we", "i", 
+        "have", "he", "she", "they", "you", "us", "him", "her", "now", "here"
+    }
+    
+    # Go backwards from the @ word to collect email words
+    for i in range(at_index - 1, -1, -1):
+        word = words[i].lower().strip(".,?!:;()")
+        if not word or word in stop_words or any(char in word for char in "@,?!:;()"):
+            break
+        local_words.insert(0, words[i])
+        
+    # We will build the domain part (right of @)
+    domain_words = []
+    if domain_part_start:
+        domain_words.append(domain_part_start)
+        
+    # Go forwards from the @ word to collect domain words
+    for i in range(at_index + 1, len(words)):
+        word = words[i].lower().strip(".,?!:;()")
+        if not word or word in stop_words or not re.match(r'^[a-z0-9.-]+$', word):
+            break
+        domain_words.append(words[i])
+        
+    # Join parts and remove all internal whitespace/punctuation at the edges
+    local_str = "".join(local_words).strip(".,?!:;()-_+ ")
+    domain_str = "".join(domain_words).strip(".,?!:;()-_+ ")
+    
+    # Build complete email candidate
+    email_clean = f"{local_str}@{domain_str}"
+    
+    # Validate final format
+    final_match = re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email_clean)
+    if final_match:
+        return email_clean
         
     return ""
 
@@ -174,16 +233,20 @@ def extract_contact_info(call_data: dict) -> dict:
     
     # 1. Try customer object
     email = customer.get("email") or ""
+    if email:
+        email = extract_email_from_text(email)
     
     # 2. Try structured data fields
     if not email:
-        email = (
+        raw_email = (
             structured_data.get("seller_email") or
             structured_data.get("email") or
             structured_data.get("email_address") or
             structured_data.get("customer_email") or
             ""
         )
+        if raw_email:
+            email = extract_email_from_text(raw_email)
     
     # 3. Search raw transcript and summary
     if not email:
@@ -481,6 +544,9 @@ def handle_send_contract_tool(arguments: dict, call_data: dict) -> str:
     Creates/updates the contact with the provided email, and triggers the GHL contract workflow.
     """
     email = arguments.get("email") or arguments.get("seller_email") or ""
+    if email:
+        email = extract_email_from_text(email)
+        
     deal_type = arguments.get("deal_type") or arguments.get("dealType") or "Cash"
     first_name = arguments.get("first_name") or arguments.get("firstName") or ""
     last_name = arguments.get("last_name") or arguments.get("lastName") or ""
@@ -491,9 +557,9 @@ def handle_send_contract_tool(arguments: dict, call_data: dict) -> str:
     phone = customer.get("number") or ""
     
     # If email wasn't provided or was malformed, search transcript
-    if not email or "@" not in email:
+    if not email:
         transcript = call_data.get("transcript") or ""
-        email = extract_email_from_text(email or transcript)
+        email = extract_email_from_text(transcript)
         
     if not email:
         # Check summary/analysis if available
