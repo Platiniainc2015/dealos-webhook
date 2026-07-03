@@ -144,8 +144,8 @@ def extract_contact_info(call_data: dict) -> dict:
     """Extract contact information from Vapi call data."""
     # Get the customer phone from the call
     customer = call_data.get("customer") or {}
-    phone = customer.get("number", "")
-    email = customer.get("email", "")
+    phone = customer.get("number") or ""
+    email = customer.get("email") or ""
     
     # Get structured data from analysis
     analysis = call_data.get("analysis") or {}
@@ -206,8 +206,14 @@ def create_or_update_contact(contact_info: dict, custom_fields: list) -> str:
                     "email": contact_info.get("email"),
                     "customFields": custom_fields,
                 }
-                requests.put(update_url, headers=GHL_HEADERS, json=update_data)
+                update_resp = requests.put(update_url, headers=GHL_HEADERS, json=update_data)
+                if update_resp.status_code not in [200, 201]:
+                    print(f"[GHL ERROR] Failed to update contact {contact_id}. Status: {update_resp.status_code}, Response: {update_resp.text}")
                 return contact_id
+            else:
+                print(f"[GHL INFO] No duplicate contact found for number: {phone}")
+        else:
+            print(f"[GHL ERROR] Duplicate search failed. Status: {search_resp.status_code}, Response: {search_resp.text}")
     
     # Create new contact
     create_url = f"{GHL_BASE_URL}/contacts/"
@@ -215,8 +221,8 @@ def create_or_update_contact(contact_info: dict, custom_fields: list) -> str:
         "locationId": GHL_LOCATION_ID,
         "firstName": contact_info.get("firstName", "Unknown"),
         "lastName": contact_info.get("lastName", "Seller"),
-        "email": contact_info.get("email"),
-        "phone": phone,
+        "email": contact_info.get("email") or None,  # GHL prefers None or omitted over empty string
+        "phone": phone or None,                      # GHL prefers None or omitted over empty string
         "customFields": custom_fields,
     }
     
@@ -225,6 +231,8 @@ def create_or_update_contact(contact_info: dict, custom_fields: list) -> str:
         contact = resp.json().get("contact")
         if contact:
             return contact.get("id", "")
+    else:
+        print(f"[GHL ERROR] Failed to create contact. Status: {resp.status_code}, Response: {resp.text}")
     
     return ""
 
@@ -261,6 +269,8 @@ def create_opportunity(contact_id: str, stage_id: str, structured_data: dict) ->
         opportunity = resp.json().get("opportunity")
         if opportunity:
             return opportunity.get("id", "")
+    else:
+        print(f"[GHL ERROR] Failed to create opportunity. Status: {resp.status_code}, Response: {resp.text}")
     
     return ""
 
