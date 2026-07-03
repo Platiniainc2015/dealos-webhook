@@ -229,13 +229,15 @@ def extract_email_from_text(text: str) -> str:
 
 def extract_contact_info(call_data: dict) -> dict:
     """Extract contact information from Vapi call data."""
-    # Get the customer phone from the call
-    customer = call_data.get("customer") or {}
-    phone = customer.get("number") or ""
-    
     # Get structured data from analysis
     analysis = call_data.get("analysis") or {}
     structured_data = analysis.get("structuredData") or {}
+    
+    # Get the customer phone from the call
+    customer = call_data.get("customer") or {}
+    phone = customer.get("number") or ""
+    if not phone:
+        phone = structured_data.get("phone") or structured_data.get("seller_phone") or ""
     
     # 1. Try customer object
     email = customer.get("email") or ""
@@ -558,9 +560,15 @@ def handle_send_contract_tool(arguments: dict, call_data: dict) -> str:
     last_name = arguments.get("last_name") or arguments.get("lastName") or ""
     property_address = arguments.get("property_address") or arguments.get("propertyAddress") or ""
     
-    # Get phone from call data
-    customer = call_data.get("customer") or {}
-    phone = customer.get("number") or ""
+    # Get phone from arguments, call data, or structured data
+    phone = arguments.get("phone") or arguments.get("seller_phone") or ""
+    if not phone:
+        customer = call_data.get("customer") or {}
+        phone = customer.get("number") or ""
+    if not phone:
+        analysis = call_data.get("analysis") or {}
+        structured_data = analysis.get("structuredData") or {}
+        phone = structured_data.get("phone") or structured_data.get("seller_phone") or ""
     
     # If email wasn't provided or was malformed, search transcript
     if not email:
