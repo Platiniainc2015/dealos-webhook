@@ -154,9 +154,10 @@ def extract_email_from_text(text: str) -> str:
             return match.group(0).lower()
 
     # Convert common spoken/written separators to standard email chars
-    temp = re.sub(r'\s*[\(\[]?\s*at\s*[\)\]]?\s*', ' @ ', text, flags=re.IGNORECASE)
+    # Require word boundaries for "at" and "dot" to avoid matching inside words like "Platinia" or "contract"
+    temp = re.sub(r'\b[\(\[]?\s*at\s*[\)\]]?\b', ' @ ', text, flags=re.IGNORECASE)
     temp = re.sub(r'\s*@\s*', ' @ ', temp)
-    temp = re.sub(r'\s*[\(\[]?\s*dot\s*[\)\]]?\s*', '.', temp, flags=re.IGNORECASE)
+    temp = re.sub(r'\b[\(\[]?\s*dot\s*[\)\]]?\b', '.', temp, flags=re.IGNORECASE)
     temp = re.sub(r'\s*\.\s*', '.', temp)
     
     # Split text into words
@@ -183,9 +184,14 @@ def extract_email_from_text(text: str) -> str:
         
     # Stop-words that indicate the email address has ended/not started yet
     stop_words = {
-        "is", "email", "my", "to", "sent", "the", "at", "address", "a", "for", 
-        "this", "it", "your", "me", "phone", "number", "and", "please", "we", "i", 
-        "have", "he", "she", "they", "you", "us", "him", "her", "now", "here"
+        "is", "are", "was", "were", "am", "be", "been", "do", "does", "did", "have", "has", "had",
+        "my", "your", "his", "her", "its", "our", "their", "mine", "yours", "hers", "ours", "theirs",
+        "the", "a", "an", "this", "that", "these", "those", "here", "there",
+        "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+        "to", "for", "of", "in", "on", "at", "by", "from", "with", "about", "against", "between", "into", "through", "during",
+        "and", "but", "or", "so", "because", "as", "if", "when", "while",
+        "email", "address", "phone", "number", "contract", "agreement", "sent", "send", "receive", "received", "got", "get", "gotten",
+        "please", "now", "just", "confirm", "confirming", "confirmation", "say", "saying", "said", "tell", "telling", "told"
     }
     
     # Go backwards from the @ word to collect email words
