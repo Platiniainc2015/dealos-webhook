@@ -189,7 +189,7 @@ def create_or_update_contact(contact_info: dict, custom_fields: list) -> str:
         search_url = f"{GHL_BASE_URL}/contacts/search/duplicate"
         search_params = {
             "locationId": GHL_LOCATION_ID,
-            "phone": phone
+            "number": phone
         }
         search_resp = requests.get(search_url, headers=GHL_HEADERS, params=search_params)
         if search_resp.status_code == 200:
