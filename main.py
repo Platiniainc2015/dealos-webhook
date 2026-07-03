@@ -101,9 +101,10 @@ GHL_HEADERS = {
 
 def determine_stage(call_data: dict) -> str:
     """Determine which pipeline stage to place the opportunity based on call outcome."""
-    analysis = call_data.get("analysis", {})
-    structured_data = analysis.get("structuredData", {}) or {}
-    summary = analysis.get("summary", "").lower()
+    analysis = call_data.get("analysis") or {}
+    structured_data = analysis.get("structuredData") or {}
+    summary = analysis.get("summary") or ""
+    summary = summary.lower()
     
     # Extract variables needed for stage determination
     deal_type = structured_data.get("deal_type", "").lower()
@@ -142,13 +143,13 @@ def determine_stage(call_data: dict) -> str:
 def extract_contact_info(call_data: dict) -> dict:
     """Extract contact information from Vapi call data."""
     # Get the customer phone from the call
-    customer = call_data.get("customer", {})
+    customer = call_data.get("customer") or {}
     phone = customer.get("number", "")
     email = customer.get("email", "")
     
     # Get structured data from analysis
-    analysis = call_data.get("analysis", {})
-    structured_data = analysis.get("structuredData", {}) or {}
+    analysis = call_data.get("analysis") or {}
+    structured_data = analysis.get("structuredData") or {}
     
     # Try to extract name from structured data or transcript
     first_name = structured_data.get("seller_first_name", "")
@@ -221,7 +222,9 @@ def create_or_update_contact(contact_info: dict, custom_fields: list) -> str:
     
     resp = requests.post(create_url, headers=GHL_HEADERS, json=create_data)
     if resp.status_code in [200, 201]:
-        return resp.json().get("contact", {}).get("id", "")
+        contact = resp.json().get("contact")
+        if contact:
+            return contact.get("id", "")
     
     return ""
 
@@ -255,7 +258,9 @@ def create_opportunity(contact_id: str, stage_id: str, structured_data: dict) ->
     
     resp = requests.post(create_url, headers=GHL_HEADERS, json=create_data)
     if resp.status_code in [200, 201]:
-        return resp.json().get("opportunity", {}).get("id", "")
+        opportunity = resp.json().get("opportunity")
+        if opportunity:
+            return opportunity.get("id", "")
     
     return ""
 
@@ -342,8 +347,8 @@ async def vapi_webhook(request: Request):
         custom_fields = build_custom_fields(structured_data)
         
         # Add call summary as internal notes
-        analysis = call_data.get("analysis", {})
-        summary = analysis.get("summary", "")
+        analysis = call_data.get("analysis") or {}
+        summary = analysis.get("summary") or ""
         if summary:
             custom_fields.append({
                 "id": CUSTOM_FIELD_MAP["internal_notes"],
