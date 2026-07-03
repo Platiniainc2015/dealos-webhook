@@ -105,6 +105,10 @@ def determine_stage(call_data: dict) -> str:
     structured_data = analysis.get("structuredData", {}) or {}
     summary = analysis.get("summary", "").lower()
     
+    # Extract variables needed for stage determination
+    deal_type = structured_data.get("deal_type", "").lower()
+    offer_amount = structured_data.get("offer_amount", "")
+    
     # Temporarily force 'under_contract' for testing if call ended by user
     ended_reason = call_data.get("endedReason", "")
     if ended_reason == "call_ended_by_user":
@@ -270,7 +274,7 @@ def send_contract(contact_id: str, deal_type: str, contact_info: dict):
     resp = requests.post(tag_url, headers=GHL_HEADERS, json=tag_data)
     
     # Log the contract send attempt
-    print(f"[CONTRACT] Added tag '{CONTRACT_READY_READY_TAG}' to contact {contact_id}")
+    print(f"[CONTRACT] Added tag '{CONTRACT_READY_TAG}' to contact {contact_id}")
     
     return {
         "contract_name": contract_name,
@@ -372,7 +376,18 @@ async def vapi_webhook(request: Request):
             actions_taken.append(f"contract_sent_{deal_type}")
             
             # 2. Trigger buyer blast (if applicable)
-            process_under_contract_deal(contact_id, structured_data)
+            deal_info = {
+                "seller_name": f"{contact_info.get('firstName', '')} {contact_info.get('lastName', '')}".strip() or "Unknown Seller",
+                "property_address": structured_data.get("property_address", "Unknown Address"),
+                "property_city": structured_data.get("property_city", ""),
+                "property_state": structured_data.get("property_state", ""),
+                "offer_amount": structured_data.get("offer_amount", "N/A"),
+                "arv": structured_data.get("arv", "N/A"),
+                "deal_type": deal_type,
+                "bedrooms": structured_data.get("bedrooms", "N/A"),
+                "bathrooms": structured_data.get("bathrooms", "N/A"),
+            }
+            process_under_contract_deal(deal_info)
             actions_taken.append("buyer_blast_triggered")
             
             # 3. Cancel any pending follow-ups
